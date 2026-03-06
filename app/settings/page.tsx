@@ -80,7 +80,7 @@ export default function SettingsPage() {
 
   const handleBatchAdd = () => {
     let s = state;
-    for (const idx of quickSelected) {
+    for (const idx of Array.from(quickSelected)) {
       const wish = DEFAULT_WISHES[idx];
       if (wish) {
         const color = getHabitColor(s.habits.length);
