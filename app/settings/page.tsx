@@ -19,9 +19,29 @@ export default function SettingsPage() {
   const [newHabitName, setNewHabitName] = useState('');
   const [showReset, setShowReset] = useState(false);
   const [quickSelected, setQuickSelected] = useState<Set<number>>(new Set());
+  const [whoopConnected, setWhoopConnected] = useState<boolean | null>(null);
+  const [whoopMessage, setWhoopMessage] = useState('');
 
   useEffect(() => {
     setState(loadState());
+
+    // Check WHOOP status
+    fetch('/api/whoop/status')
+      .then(r => r.json())
+      .then(d => setWhoopConnected(d.connected))
+      .catch(() => setWhoopConnected(false));
+
+    // Check URL params for WHOOP callback result
+    const params = new URLSearchParams(window.location.search);
+    const whoopParam = params.get('whoop');
+    if (whoopParam === 'connected') {
+      setWhoopConnected(true);
+      setWhoopMessage('WHOOP connected successfully!');
+      window.history.replaceState({}, '', '/settings');
+    } else if (whoopParam === 'error') {
+      setWhoopMessage('Failed to connect WHOOP. Try again.');
+      window.history.replaceState({}, '', '/settings');
+    }
   }, []);
 
   if (!state) {
@@ -209,6 +229,62 @@ export default function SettingsPage() {
             </AnimatePresence>
           </section>
         )}
+
+        {/* WHOOP Connection */}
+        <section className="mb-8">
+          <p className="text-[10px] uppercase tracking-[0.3em] text-white/30 font-medium mb-4">
+            WHOOP Integration
+          </p>
+
+          {whoopMessage && (
+            <div className={`mb-3 px-4 py-2.5 rounded-xl text-xs ${
+              whoopMessage.includes('success') ? 'bg-teal-400/10 text-teal-400/80 border border-teal-400/20' : 'bg-red-400/10 text-red-400/70 border border-red-400/20'
+            }`}>
+              {whoopMessage}
+            </div>
+          )}
+
+          <div className="bg-surface-card border border-white/[0.04] rounded-xl p-4">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-8 h-8 rounded-full border-2 border-teal-400/30 flex items-center justify-center">
+                <div className="w-4 h-4 rounded-full border-2 border-teal-400/50 flex items-center justify-center">
+                  <div className="w-1.5 h-1.5 rounded-full bg-teal-400/70" />
+                </div>
+              </div>
+              <div className="flex-1">
+                <p className="text-sm text-white/60 font-heading font-semibold">WHOOP</p>
+                <p className="text-[10px] text-white/20">
+                  {whoopConnected === null ? 'Checking...' : whoopConnected ? 'Connected' : 'Not connected'}
+                </p>
+              </div>
+              {whoopConnected !== null && (
+                whoopConnected ? (
+                  <button
+                    onClick={async () => {
+                      await fetch('/api/whoop/disconnect', { method: 'POST' });
+                      setWhoopConnected(false);
+                      setWhoopMessage('');
+                    }}
+                    className="px-4 py-2 rounded-lg text-[10px] uppercase tracking-wider font-medium text-red-400/60 border border-red-400/15 hover:border-red-400/30 hover:text-red-400 transition-all"
+                  >
+                    Disconnect
+                  </button>
+                ) : (
+                  <a
+                    href="/api/whoop/auth"
+                    className="px-4 py-2 rounded-lg text-[10px] uppercase tracking-wider font-medium text-teal-400 border border-teal-400/25 bg-teal-400/10 hover:bg-teal-400/20 transition-all"
+                  >
+                    Connect
+                  </a>
+                )
+              )}
+            </div>
+            <p className="text-[10px] text-white/15 leading-relaxed">
+              Connect your WHOOP to auto-import Sleep, Recovery, and Strain data.
+              Go to the Health section on the Today tab and use the Import button to sync.
+            </p>
+          </div>
+        </section>
 
         {/* Data */}
         <section className="mb-8 space-y-3">

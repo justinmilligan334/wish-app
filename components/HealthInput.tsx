@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 interface HealthInputProps {
   initial: { sleepPerformance: number; recovery: number; strain: number } | null;
@@ -29,12 +29,56 @@ export default function HealthInput({ initial, onUpdate }: HealthInputProps) {
   const [sleep, setSleep] = useState(initial?.sleepPerformance ?? 0);
   const [recovery, setRecovery] = useState(initial?.recovery ?? 0);
   const [strain, setStrain] = useState(initial?.strain ?? 0);
+  const [whoopConnected, setWhoopConnected] = useState<boolean | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState('');
+  const [lastSynced, setLastSynced] = useState('');
 
   useEffect(() => {
     if (initial) { setSleep(initial.sleepPerformance); setRecovery(initial.recovery); setStrain(initial.strain); }
   }, [initial]);
 
+  // Check WHOOP connection status
+  useEffect(() => {
+    fetch('/api/whoop/status')
+      .then(r => r.json())
+      .then(d => setWhoopConnected(d.connected))
+      .catch(() => setWhoopConnected(false));
+  }, []);
+
   const commit = (s: number, r: number, st: number) => onUpdate(s, r, st);
+
+  const syncWhoop = useCallback(async () => {
+    setSyncing(true);
+    setSyncError('');
+    try {
+      const res = await fetch('/api/whoop/data');
+      if (!res.ok) {
+        if (res.status === 401) {
+          setWhoopConnected(false);
+          setSyncError('Session expired. Reconnect in Settings.');
+        } else {
+          setSyncError('Sync failed. Try again.');
+        }
+        return;
+      }
+      const data = await res.json();
+
+      const s = data.sleepPerformance ?? sleep;
+      const r = data.recovery ?? recovery;
+      const st = data.strain ?? strain;
+
+      setSleep(s);
+      setRecovery(r);
+      setStrain(st);
+      commit(s, r, st);
+      setLastSynced(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+    } catch {
+      setSyncError('Network error. Try again.');
+    } finally {
+      setSyncing(false);
+    }
+  }, [sleep, recovery, strain]);
 
   const metrics = [
     { label: 'Sleep', value: sleep, set: (v: number) => { setSleep(v); commit(v, recovery, strain); }, max: 100, unit: '%', color: '#38bdf8', step: 1 },
@@ -100,28 +144,84 @@ export default function HealthInput({ initial, onUpdate }: HealthInputProps) {
       ) : (
         /* Import mode — Connect to WHOOP */
         <div className="px-5 pb-6 pt-2">
-          <div className="flex flex-col items-center text-center py-6 rounded-xl border border-dashed border-sky-400/15 bg-sky-400/[0.02]">
-            {/* WHOOP-style icon */}
-            <div className="w-12 h-12 rounded-full border-2 border-teal-400/30 flex items-center justify-center mb-4">
-              <div className="w-6 h-6 rounded-full border-2 border-teal-400/50 flex items-center justify-center">
-                <div className="w-2 h-2 rounded-full bg-teal-400/70" />
-              </div>
+          {whoopConnected === null ? (
+            // Loading state
+            <div className="flex items-center justify-center py-8">
+              <div className="w-5 h-5 border-2 border-teal-400/30 border-t-teal-400 rounded-full animate-spin" />
             </div>
+          ) : whoopConnected ? (
+            // Connected — show sync button
+            <div className="flex flex-col items-center text-center py-4 rounded-xl border border-teal-400/15 bg-teal-400/[0.03]">
+              <div className="w-10 h-10 rounded-full border-2 border-teal-400/40 flex items-center justify-center mb-3">
+                <div className="w-5 h-5 rounded-full border-2 border-teal-400/60 flex items-center justify-center">
+                  <div className="w-2 h-2 rounded-full bg-teal-400" />
+                </div>
+              </div>
 
-            <p className="text-sm text-white/60 font-heading font-semibold mb-1">
-              Connect to WHOOP
-            </p>
-            <p className="text-[11px] text-white/25 mb-4 max-w-[220px] leading-relaxed">
-              Automatic sync will pull your Sleep, Recovery & Strain data daily
-            </p>
+              <p className="text-sm text-teal-400/80 font-heading font-semibold mb-1">WHOOP Connected</p>
 
-            <button
-              disabled
-              className="px-6 py-2 rounded-xl text-xs font-heading font-semibold uppercase tracking-wider bg-teal-400/10 text-teal-400/40 border border-teal-400/15 cursor-not-allowed"
-            >
-              Coming Soon
-            </button>
-          </div>
+              {lastSynced && (
+                <p className="text-[10px] text-white/20 mb-3">Last synced {lastSynced}</p>
+              )}
+
+              {syncError && (
+                <p className="text-[10px] text-red-400/70 mb-3">{syncError}</p>
+              )}
+
+              <button
+                onClick={syncWhoop}
+                disabled={syncing}
+                className={`px-6 py-2 rounded-xl text-xs font-heading font-semibold uppercase tracking-wider transition-all ${
+                  syncing
+                    ? 'bg-teal-400/5 text-teal-400/30 border border-teal-400/10 cursor-wait'
+                    : 'bg-teal-400/15 text-teal-400 border border-teal-400/25 hover:bg-teal-400/25'
+                }`}
+              >
+                {syncing ? 'Syncing...' : 'Sync Now'}
+              </button>
+
+              {/* Show current values if synced */}
+              {(sleep > 0 || recovery > 0 || strain > 0) && (
+                <div className="flex items-center gap-4 mt-4 pt-3 border-t border-white/[0.04] w-full px-4">
+                  <div className="flex-1 text-center">
+                    <p className="text-sm font-heading font-bold text-sky-400">{sleep}%</p>
+                    <p className="text-[9px] text-white/20 uppercase tracking-wider">Sleep</p>
+                  </div>
+                  <div className="flex-1 text-center">
+                    <p className="text-sm font-heading font-bold" style={{ color: getRecoveryColor(recovery) }}>{recovery}%</p>
+                    <p className="text-[9px] text-white/20 uppercase tracking-wider">Recovery</p>
+                  </div>
+                  <div className="flex-1 text-center">
+                    <p className="text-sm font-heading font-bold text-amber-400">{strain}</p>
+                    <p className="text-[9px] text-white/20 uppercase tracking-wider">Strain</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            // Not connected
+            <div className="flex flex-col items-center text-center py-6 rounded-xl border border-dashed border-sky-400/15 bg-sky-400/[0.02]">
+              <div className="w-12 h-12 rounded-full border-2 border-teal-400/30 flex items-center justify-center mb-4">
+                <div className="w-6 h-6 rounded-full border-2 border-teal-400/50 flex items-center justify-center">
+                  <div className="w-2 h-2 rounded-full bg-teal-400/70" />
+                </div>
+              </div>
+
+              <p className="text-sm text-white/60 font-heading font-semibold mb-1">
+                Connect to WHOOP
+              </p>
+              <p className="text-[11px] text-white/25 mb-4 max-w-[220px] leading-relaxed">
+                Automatic sync will pull your Sleep, Recovery & Strain data daily
+              </p>
+
+              <a
+                href="/api/whoop/auth"
+                className="px-6 py-2 rounded-xl text-xs font-heading font-semibold uppercase tracking-wider bg-teal-400/15 text-teal-400 border border-teal-400/25 hover:bg-teal-400/25 transition-all"
+              >
+                Connect WHOOP
+              </a>
+            </div>
+          )}
         </div>
       )}
     </div>
